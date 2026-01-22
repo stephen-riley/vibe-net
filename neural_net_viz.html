@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neural Network Visualization</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --panel-bg: #1e293b;
+            --text-color: #f8fafc;
+            --accent-color: #38bdf8;
+            --accent-glow: rgba(56, 189, 248, 0.5);
+            --neuron-idle: #334155;
+            --neuron-active: #38bdf8;
+            --connection-color: #475569;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        header {
+            padding: 1rem 2rem;
+            background-color: var(--panel-bg);
+            border-bottom: 1px solid #334155;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            z-index: 10;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 600;
+            letter-spacing: -0.025em;
+            background: linear-gradient(to right, #38bdf8, #818cf8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        #controls {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        #status-display {
+            font-size: 0.875rem;
+            color: #94a3b8;
+            margin-right: 1rem;
+            font-weight: 500;
+            min-width: 200px;
+            text-align: right;
+        }
+
+        button {
+            background-color: var(--accent-color);
+            color: #0f172a;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        #main-container {
+            flex: 1;
+            position: relative;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 2rem;
+            gap: 4rem;
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            /* Allow mouse events to pass through to elements, but we need events ON canvas for lines.
+               So we'll use a manual hit test approach on body mousemove, or set pointer-events: auto?
+               Actually, setting pointer-events: none lets us click buttons/neurons. 
+               We can listen to mousemove on the container/body to detect line proximity. */
+            pointer-events: none;
+        }
+
+        .layer-container {
+            z-index: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1rem;
+            background: rgba(30, 41, 59, 0.5);
+            /* Semi-transparent panel */
+            padding: 1.5rem;
+            border-radius: 1rem;
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            max-height: 90vh;
+        }
+
+        .layer-title {
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: #94a3b8;
+            font-weight: 600;
+        }
+
+        /* Input Grid */
+        #input-grid {
+            display: grid;
+            grid-template-columns: repeat(28, 1fr);
+            gap: 1px;
+            width: 280px;
+            /* 10px per cell */
+            height: 280px;
+        }
+
+        .input-cell {
+            width: 10px;
+            height: 10px;
+            background-color: #000;
+            transition: background-color 0.1s;
+        }
+
+        /* Neurons */
+        .neuron-column {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            /* Spacing for hidden layer */
+            justify-content: center;
+            height: 100%;
+        }
+
+        #output-layer .neuron-column {
+            gap: 20px;
+        }
+
+        .neuron {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background-color: var(--neuron-idle);
+            border: 2px solid #475569;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: bold;
+            color: rgba(255, 255, 255, 0.7);
+            /* Default visible text for indexes/values if needed */
+            transition: all 0.2s ease;
+            position: relative;
+            cursor: pointer;
+            /* Hint that it's interactive (hoverable) */
+            user-select: none;
+        }
+
+        .neuron.active {
+            box-shadow: 0 0 15px var(--accent-glow);
+            border-color: #fff;
+            color: #fff;
+        }
+
+        .neuron.computing {
+            border-color: #fbbf24;
+            /* Amber for working */
+            box-shadow: 0 0 10px rgba(251, 191, 36, 0.5);
+        }
+
+        #hidden-layer .neuron {
+            width: 24px;
+            height: 24px;
+            color: transparent;
+            /* No text inside hidden neurons typically */
+        }
+
+        #output-layer .neuron {
+            width: 40px;
+            /* Slightly larger to fit digit */
+            height: 40px;
+            font-size: 1.2rem;
+        }
+
+        /* Output Value Display (next to neuron) */
+        .output-value {
+            position: absolute;
+            left: 50px;
+            /* Shifted for larger neuron */
+            font-size: 0.875rem;
+            color: var(--accent-color);
+            opacity: 0.8;
+            white-space: nowrap;
+            font-weight: normal;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: rgba(15, 23, 42, 0.95);
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.1s;
+            z-index: 100;
+            border: 1px solid #334155;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            white-space: pre;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <h1>Neural Net Visualization</h1>
+        <div id="controls">
+            <div id="status-display">Ready</div>
+            <button id="btn-step">Step Neuron</button>
+            <button id="btn-finish-layer">Finish Layer</button>
+            <button id="btn-reset">Reset</button>
+        </div>
+    </header>
+
+    <div id="main-container">
+        <canvas id="connections-canvas"></canvas>
+
+        <!-- Input Layer -->
+        <div class="layer-container" id="input-layer">
+            <div class="layer-title">Input (28x28)</div>
+            <div id="input-grid"></div>
+        </div>
+
+        <!-- Hidden Layer -->
+        <div class="layer-container" id="hidden-layer">
+            <div class="layer-title">Hidden (20)</div>
+            <div class="neuron-column" id="hidden-neurons">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+
+        <!-- Output Layer -->
+        <div class="layer-container" id="output-layer">
+            <div class="layer-title">Output (10)</div>
+            <div class="neuron-column" id="output-neurons">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+    </div>
+
+    <div id="tooltip" class="tooltip"></div>
+
+    <script>
+        // --- Constants & Config ---
+        const GRAYSCALE = " .:-=+*#%@";
+
+        const RAW_DATA = `
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+      #@%+@%@@%++++          
+      @@@@@@@@@@@@@-         
+      :++++++*++@@@.         
+               :@@=          
+               %@#           
+               %@*           
+              :@@-           
+              -@@:           
+              #@%            
+             .@@+            
+             .@@=            
+             .@@=            
+             .@@=            
+             .@@             
+              #@=            
+              *@%            
+              *@%            
+              *@@            
+               %@#           
+               :@@:          
+                            `;
+
+        // --- Neural Network Classes ---
+
+        function sigmoid(x) {
+            return 1 / (1 + Math.exp(-x));
+        }
+
+        class Neuron {
+            constructor(inputCount) {
+                this.bias = Math.random() * 2 - 1;
+                this.weights = [];
+                for (let i = 0; i < inputCount; i++) {
+                    this.weights.push(Math.random() * 2 - 1);
+                }
+                this.output = 0;
+                this.inputSum = 0; // Pre-activation sum
+            }
+
+            activate(inputs) {
+                let sum = this.bias;
+                for (let i = 0; i < inputs.length; i++) {
+                    sum += inputs[i] * this.weights[i];
+                }
+                this.inputSum = sum;
+                this.output = sigmoid(sum);
+                return this.output;
+            }
+        }
+
+        class Layer {
+            constructor(neuronCount, inputCount) {
+                this.neurons = [];
+                for (let i = 0; i < neuronCount; i++) {
+                    this.neurons.push(new Neuron(inputCount));
+                }
+            }
+        }
+
+        class Network {
+            constructor() {
+                this.hiddenLayer = new Layer(20, 784);
+                this.outputLayer = new Layer(10, 20);
+            }
+        }
+
+        // --- Visualization & App Logic ---
+
+        const inputGridEl = document.getElementById('input-grid');
+        const hiddenNeuronsEl = document.getElementById('hidden-neurons');
+        const outputNeuronsEl = document.getElementById('output-neurons');
+        const canvas = document.getElementById('connections-canvas');
+        const ctx = canvas.getContext('2d');
+        const tooltip = document.getElementById('tooltip');
+
+        const btnStep = document.getElementById('btn-step');
+        const btnFinishLayer = document.getElementById('btn-finish-layer');
+        const btnReset = document.getElementById('btn-reset');
+        const statusDisplay = document.getElementById('status-display');
+
+        let network = new Network();
+        let inputData = new Array(784).fill(0);
+
+        // State Machine
+        const STATE = {
+            IDLE: 'idle',
+            HIDDEN: 'hidden',
+            OUTPUT: 'output',
+            DONE: 'done'
+        };
+
+        let appState = {
+            phase: STATE.IDLE,
+            index: 0
+        };
+
+        // Cached positions for drawing/interaction
+        let inputPositions = [];
+        let hiddenPositions = [];
+        let outputPositions = [];
+
+        function parseInputData(text) {
+            const lines = text.split('\n');
+            let data = new Array(784).fill(0);
+            let row = 0;
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                if (line.length === 0 && row === 0) continue;
+                if (row >= 28) break;
+
+                const paddedLine = line.padEnd(28, ' ');
+                for (let col = 0; col < 28; col++) {
+                    const char = paddedLine[col];
+                    const index = GRAYSCALE.indexOf(char);
+                    const value = index === -1 ? 0 : index / (GRAYSCALE.length - 1);
+                    data[row * 28 + col] = value;
+                }
+                row++;
+            }
+            return data;
+        }
+
+        function initUI() {
+            // Build Input Grid
+            inputGridEl.innerHTML = '';
+            inputData.forEach((val, idx) => {
+                const div = document.createElement('div');
+                div.className = 'input-cell';
+                div.dataset.index = idx;
+                inputGridEl.appendChild(div);
+            });
+
+            // Build Hidden Neurons
+            hiddenNeuronsEl.innerHTML = '';
+            network.hiddenLayer.neurons.forEach((n, idx) => {
+                const div = document.createElement('div');
+                div.className = 'neuron';
+                div.dataset.layer = 'hidden';
+                div.dataset.index = idx;
+                hiddenNeuronsEl.appendChild(div);
+            });
+
+            // Build Output Neurons
+            outputNeuronsEl.innerHTML = '';
+            network.outputLayer.neurons.forEach((n, idx) => {
+                const div = document.createElement('div');
+                div.className = 'neuron';
+                div.dataset.layer = 'output';
+                div.dataset.index = idx;
+                div.textContent = idx; // Digit inside circle
+
+                // Value display outside
+                const valLabel = document.createElement('span');
+                valLabel.className = 'output-value';
+                valLabel.textContent = '0.00';
+                div.appendChild(valLabel);
+
+                outputNeuronsEl.appendChild(div);
+            });
+
+            resizeCanvas();
+        }
+
+        function resizeCanvas() {
+            canvas.width = canvas.parentElement.offsetWidth;
+            canvas.height = canvas.parentElement.offsetHeight;
+            cacheElementPositions();
+            drawConnections();
+        }
+
+        function getCenter(element) {
+            const rect = element.getBoundingClientRect();
+            const containerRect = canvas.parentElement.getBoundingClientRect();
+            return {
+                x: rect.left + rect.width / 2 - containerRect.left,
+                y: rect.top + rect.height / 2 - containerRect.top
+            };
+        }
+
+        function cacheElementPositions() {
+            // Inputs
+            inputPositions = [];
+            const inputCells = Array.from(document.querySelectorAll('.input-cell'));
+            inputCells.forEach((el, idx) => {
+                inputPositions[idx] = getCenter(el);
+            });
+
+            // Hidden
+            hiddenPositions = [];
+            const hiddenNodes = Array.from(hiddenNeuronsEl.children);
+            hiddenNodes.forEach((el, idx) => {
+                hiddenPositions[idx] = getCenter(el);
+            });
+
+            // Output
+            outputPositions = [];
+            const outputNodes = Array.from(outputNeuronsEl.children);
+            outputNodes.forEach((el, idx) => {
+                outputPositions[idx] = getCenter(el);
+            });
+        }
+
+        function updateVisuals() {
+            // Update Grid
+            const inputCells = document.querySelectorAll('.input-cell');
+            inputCells.forEach((cell, i) => {
+                const val = inputData[i];
+                if (val > 0) {
+                    cell.style.backgroundColor = `rgba(56, 189, 248, ${val})`;
+                } else {
+                    cell.style.backgroundColor = '#000';
+                }
+            });
+
+            // Update Hidden Neurons
+            const hiddenNodes = hiddenNeuronsEl.children;
+            network.hiddenLayer.neurons.forEach((n, i) => {
+                const el = hiddenNodes[i];
+                const val = n.output;
+                el.style.backgroundColor = val > 0 ? `rgba(56, 189, 248, ${val * 0.8 + 0.2})` : 'var(--neuron-idle)';
+
+                if (appState.phase === STATE.HIDDEN && appState.index === i) {
+                    el.classList.add('computing');
+                } else {
+                    el.classList.remove('computing');
+                }
+
+                if (val > 0.5) el.classList.add('active');
+                else el.classList.remove('active');
+            });
+
+            // Update Output Neurons
+            const outputNodes = outputNeuronsEl.children;
+            let maxVal = -1;
+            let maxIdx = -1;
+            network.outputLayer.neurons.forEach((n, i) => {
+                if (n.output > maxVal) {
+                    maxVal = n.output;
+                    maxIdx = i;
+                }
+            });
+
+            network.outputLayer.neurons.forEach((n, i) => {
+                const el = outputNodes[i];
+                const val = n.output;
+                const valLabel = el.querySelector('.output-value');
+
+                // Background opacity based on value
+                el.style.backgroundColor = val > 0 ? `rgba(56, 189, 248, ${val * 0.8 + 0.2})` : 'var(--neuron-idle)';
+                valLabel.textContent = val.toFixed(2);
+
+                if (appState.phase === STATE.OUTPUT && appState.index === i) {
+                    el.classList.add('computing');
+                } else {
+                    el.classList.remove('computing');
+                }
+
+                const isWinner = (i === maxIdx && val > 0.5 && appState.phase === STATE.DONE);
+
+                if (isWinner) {
+                    el.classList.add('active');
+                    el.style.borderColor = '#4ade80';
+                    el.style.backgroundColor = '#4ade80';
+                } else {
+                    el.classList.remove('active');
+                    el.style.borderColor = '#475569';
+                }
+            });
+
+            if (appState.phase === STATE.IDLE) statusDisplay.textContent = "Ready to start";
+            else if (appState.phase === STATE.HIDDEN) statusDisplay.textContent = `Computing Hidden: ${appState.index + 1}/20`;
+            else if (appState.phase === STATE.OUTPUT) statusDisplay.textContent = `Computing Output: ${appState.index + 1}/10`;
+            else if (appState.phase === STATE.DONE) statusDisplay.textContent = "Prediction Complete";
+        }
+
+        function drawConnections() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.lineWidth = 1;
+
+            if (appState.phase === STATE.HIDDEN) {
+                const targetIdx = appState.index;
+                const targetPos = hiddenPositions[targetIdx];
+
+                for (let i = 0; i < inputPositions.length; i++) {
+                    const val = inputData[i];
+                    if (val > 0.05) {
+                        ctx.beginPath();
+                        ctx.moveTo(inputPositions[i].x, inputPositions[i].y);
+                        ctx.lineTo(targetPos.x, targetPos.y);
+                        ctx.strokeStyle = `rgba(56, 189, 248, ${val * 0.8})`;
+                        ctx.stroke();
+                    }
+                }
+            } else if (appState.phase === STATE.OUTPUT) {
+                const targetIdx = appState.index;
+                const targetPos = outputPositions[targetIdx];
+
+                for (let i = 0; i < hiddenPositions.length; i++) {
+                    const val = network.hiddenLayer.neurons[i].output;
+                    ctx.beginPath();
+                    ctx.moveTo(hiddenPositions[i].x, hiddenPositions[i].y);
+                    ctx.lineTo(targetPos.x, targetPos.y);
+                    ctx.strokeStyle = `rgba(56, 189, 248, ${val * 0.9 + 0.1})`;
+                    ctx.stroke();
+                }
+            } else if (appState.phase === STATE.DONE) {
+                ctx.strokeStyle = 'rgba(56, 189, 248, 0.1)';
+                for (let i = 0; i < hiddenPositions.length; i++) {
+                    if (network.hiddenLayer.neurons[i].output < 0.1) continue;
+                    for (let j = 0; j < outputPositions.length; j++) {
+                        ctx.beginPath();
+                        ctx.moveTo(hiddenPositions[i].x, hiddenPositions[i].y);
+                        ctx.lineTo(outputPositions[j].x, outputPositions[j].y);
+                        ctx.stroke();
+                    }
+                }
+            }
+        }
+
+        function performStep() {
+            if (appState.phase === STATE.DONE) return;
+
+            if (appState.phase === STATE.IDLE) {
+                appState.phase = STATE.HIDDEN;
+                appState.index = 0;
+            }
+
+            if (appState.phase === STATE.HIDDEN) {
+                const neuron = network.hiddenLayer.neurons[appState.index];
+                neuron.activate(inputData);
+
+                drawConnections();
+                updateVisuals();
+
+                appState.index++;
+                if (appState.index >= 20) {
+                    appState.phase = STATE.OUTPUT;
+                    appState.index = 0;
+                }
+            } else if (appState.phase === STATE.OUTPUT) {
+                const hiddenOutputs = network.hiddenLayer.neurons.map(n => n.output);
+                const neuron = network.outputLayer.neurons[appState.index];
+                neuron.activate(hiddenOutputs);
+
+                drawConnections();
+                updateVisuals();
+
+                appState.index++;
+                if (appState.index >= 10) {
+                    appState.phase = STATE.DONE;
+                    drawConnections();
+                    updateVisuals();
+                }
+            }
+        }
+
+        function finishCurrentLayer() {
+            if (appState.phase === STATE.IDLE) performStep();
+            const startPhase = appState.phase;
+            if (startPhase === STATE.DONE) return;
+            while (appState.phase === startPhase) {
+                performStep();
+            }
+        }
+
+        // --- Interaction & Tooltips ---
+
+        // Distance from point to line segment
+        function distToSegment(p, v, w) {
+            const l2 = (w.x - v.x) ** 2 + (w.y - v.y) ** 2;
+            if (l2 === 0) return Math.hypot(p.x - v.x, p.y - v.y);
+            let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+            t = Math.max(0, Math.min(1, t));
+            return Math.hypot(p.x - v.x - t * (w.x - v.x), p.y - v.y - t * (w.y - v.y));
+        }
+
+        document.getElementById('main-container').addEventListener('mousemove', (e) => {
+            // Neuron Hover
+            if (e.target.classList.contains('neuron')) {
+                const layer = e.target.dataset.layer;
+                const idx = parseInt(e.target.dataset.index);
+                let n = null;
+                if (layer === 'hidden') n = network.hiddenLayer.neurons[idx];
+                if (layer === 'output') n = network.outputLayer.neurons[idx];
+
+                if (n) {
+                    tooltip.style.opacity = 1;
+                    tooltip.style.left = e.pageX + 15 + 'px';
+                    tooltip.style.top = e.pageY + 15 + 'px';
+                    tooltip.innerHTML = `<strong>Neuron ${idx}</strong><br>Sum: ${n.inputSum.toFixed(4)}<br>Val: ${n.output.toFixed(4)}<br>Bias: ${n.bias.toFixed(4)}`;
+                    return;
+                }
+            }
+
+            // Input Pixel Hover
+            if (e.target.classList.contains('input-cell')) {
+                const idx = parseInt(e.target.dataset.index);
+                if (!isNaN(idx) && idx >= 0 && idx < inputData.length) {
+                    const val = inputData[idx];
+                    tooltip.style.opacity = 1;
+                    tooltip.style.left = e.pageX + 15 + 'px';
+                    tooltip.style.top = e.pageY + 15 + 'px';
+                    tooltip.innerHTML = `<strong>Input Pixel ${idx}</strong><br>Val: ${val.toFixed(4)}`;
+                    return;
+                }
+            }
+
+            // Connection Check (only if not over neuron)
+            // Check "Active" lines primarily based on state
+            const mouseX = e.pageX - canvas.getBoundingClientRect().left;
+            const mouseY = e.pageY - canvas.getBoundingClientRect().top;
+            const mouseP = { x: mouseX, y: mouseY };
+
+            // Strategy: 
+            // If HIDDEN phase: Check lines from Input -> Current Hidden Neuron
+            // If OUTPUT phase: Check lines from Hidden -> Current Output Neuron
+            // If DONE phase: Check visible webs?
+
+            let foundWeight = null;
+            let foundSourceId = null;
+
+            if (appState.phase === STATE.HIDDEN && appState.index > 0) {
+                // The neuron just calculated is appState.index - 1
+                const targetIdx = appState.index - 1;
+                // Just show weights for this active "fan-in"
+                const targetPos = hiddenPositions[targetIdx];
+                const neuron = network.hiddenLayer.neurons[targetIdx];
+
+                // Check inputs
+                for (let i = 0; i < inputPositions.length; i++) {
+                    if (inputData[i] < 0.05) continue; // we didn't draw these
+                    const d = distToSegment(mouseP, inputPositions[i], targetPos);
+                    if (d < 5) {
+                        foundWeight = neuron.weights[i];
+                        foundSourceId = `Input ${i}`;
+                        break;
+                    }
+                }
+            }
+            else if (appState.phase === STATE.OUTPUT && appState.index > 0) {
+                const targetIdx = appState.index - 1;
+                const targetPos = outputPositions[targetIdx];
+                const neuron = network.outputLayer.neurons[targetIdx];
+
+                for (let i = 0; i < hiddenPositions.length; i++) {
+                    const d = distToSegment(mouseP, hiddenPositions[i], targetPos);
+                    if (d < 5) {
+                        foundWeight = neuron.weights[i];
+                        foundSourceId = `Hidden ${i}`;
+                        break;
+                    }
+                }
+            }
+
+            if (foundWeight !== null) {
+                tooltip.style.opacity = 1;
+                tooltip.style.left = e.pageX + 15 + 'px';
+                tooltip.style.top = e.pageY + 15 + 'px';
+                tooltip.innerHTML = `<strong>Connection</strong><br>From: ${foundSourceId}<br>Weight: ${foundWeight.toFixed(4)}`;
+            } else {
+                // Hide if not finding anything
+                if (!e.target.classList.contains('neuron')) {
+                    tooltip.style.opacity = 0;
+                }
+            }
+        });
+
+        btnStep.addEventListener('click', performStep);
+        btnFinishLayer.addEventListener('click', finishCurrentLayer);
+
+        btnReset.addEventListener('click', () => {
+            appState.phase = STATE.IDLE;
+            appState.index = 0;
+            // Creation of new Network randomizes weights/biases
+            network = new Network();
+            // Re-bind to UI or update UI to reflect new values (updateVisuals handles color/values)
+            // But UI elements are stable, we just update their colors/text.
+
+            // Clear outputs
+            updateVisuals();
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        });
+
+        window.addEventListener('resize', resizeCanvas);
+
+        inputData = parseInputData(RAW_DATA);
+        initUI();
+        updateVisuals();
+
+    </script>
+</body>
+
+</html>
