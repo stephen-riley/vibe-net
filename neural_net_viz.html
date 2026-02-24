@@ -64,6 +64,14 @@
             font-weight: 500;
             min-width: 200px;
             text-align: right;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        #loss-display {
+            font-size: 0.75rem;
+            color: #ef4444;
         }
 
         button {
@@ -252,9 +260,13 @@
     <header>
         <h1>Neural Net Visualization</h1>
         <div id="controls">
-            <div id="status-display">Ready</div>
+            <div id="status-display">
+                <div id="status-text">Ready</div>
+                <div id="loss-display"></div>
+            </div>
             <button id="btn-step">Step Neuron</button>
             <button id="btn-finish-layer">Finish Layer</button>
+            <button id="btn-train">Train Step</button>
             <button id="btn-reset">Reset</button>
         </div>
     </header>
@@ -327,6 +339,11 @@
             return 1 / (1 + Math.exp(-x));
         }
 
+        function sigmoidDerivative(x) {
+            // x is already sigmoid(sum), so derivative is x * (1 - x)
+            return x * (1 - x);
+        }
+
         class Neuron {
             constructor(inputCount) {
                 this.bias = Math.random() * 2 - 1;
@@ -336,6 +353,9 @@
                 }
                 this.output = 0;
                 this.inputSum = 0; // Pre-activation sum
+                this.delta = 0;
+                this.weightGradients = new Array(inputCount).fill(0);
+                this.biasGradient = 0;
             }
 
             activate(inputs) {
@@ -362,6 +382,8 @@
             constructor() {
                 this.hiddenLayer = new Layer(20, 784);
                 this.outputLayer = new Layer(10, 20);
+                this.learningRate = 0.5; // High rate for visibility
+                this.target = 7; // Default target for valid input
             }
         }
 
@@ -376,10 +398,13 @@
 
         const btnStep = document.getElementById('btn-step');
         const btnFinishLayer = document.getElementById('btn-finish-layer');
+        const btnTrain = document.getElementById('btn-train');
         const btnReset = document.getElementById('btn-reset');
-        const statusDisplay = document.getElementById('status-display');
+        const statusDisplay = document.getElementById('status-text');
+        const lossDisplay = document.getElementById('loss-display');
 
         let network = new Network();
+        let isTraining = false; // Flag for animation loop
         let inputData = new Array(784).fill(0);
 
         // State Machine
@@ -387,7 +412,10 @@
             IDLE: 'idle',
             HIDDEN: 'hidden',
             OUTPUT: 'output',
-            DONE: 'done'
+            DONE: 'done',
+            BACKPROP_CALCING: 'backprop_calcing', // New unified backprop state
+            BACKPROP_HIDDEN: 'backprop_hidden',   // New Input->Hidden backprop state
+            TRAINING_DONE: 'training_done'
         };
 
         let appState = {
@@ -457,6 +485,16 @@
                 valLabel.textContent = '0.00';
                 div.appendChild(valLabel);
 
+                // Loss Display (Left of node)
+                const lossLabel = document.createElement('span');
+                lossLabel.className = 'loss-value';
+                lossLabel.style.position = 'absolute';
+                lossLabel.style.right = '50px'; // Left of the neuron (which is 40px wide) 
+                lossLabel.style.color = '#ef4444';
+                lossLabel.style.fontSize = '12px';
+                lossLabel.style.opacity = '0'; // Hidden by default
+                div.appendChild(lossLabel);
+
                 outputNeuronsEl.appendChild(div);
             });
 
@@ -523,6 +561,8 @@
 
                 if (appState.phase === STATE.HIDDEN && appState.index === i) {
                     el.classList.add('computing');
+                } else if (appState.phase === STATE.BACKPROP_HIDDEN && appState.index === i) {
+                    el.classList.add('computing');
                 } else {
                     el.classList.remove('computing');
                 }
@@ -551,7 +591,7 @@
                 el.style.backgroundColor = val > 0 ? `rgba(56, 189, 248, ${val * 0.8 + 0.2})` : 'var(--neuron-idle)';
                 valLabel.textContent = val.toFixed(2);
 
-                if (appState.phase === STATE.OUTPUT && appState.index === i) {
+                if ((appState.phase === STATE.OUTPUT || appState.phase === STATE.BACKPROP_CALCING) && appState.index === i) {
                     el.classList.add('computing');
                 } else {
                     el.classList.remove('computing');
@@ -569,10 +609,47 @@
                 }
             });
 
-            if (appState.phase === STATE.IDLE) statusDisplay.textContent = "Ready to start";
+            if (appState.phase === STATE.IDLE) {
+                statusDisplay.textContent = "Ready to start";
+                lossDisplay.textContent = "";
+                btnStep.textContent = "Step Neuron";
+                // Hide losses
+                document.querySelectorAll('.loss-value').forEach(el => el.style.opacity = 0);
+            }
             else if (appState.phase === STATE.HIDDEN) statusDisplay.textContent = `Computing Hidden: ${appState.index + 1}/20`;
             else if (appState.phase === STATE.OUTPUT) statusDisplay.textContent = `Computing Output: ${appState.index + 1}/10`;
-            else if (appState.phase === STATE.DONE) statusDisplay.textContent = "Prediction Complete";
+            else if (appState.phase === STATE.DONE) {
+                statusDisplay.textContent = "Prediction Complete (Ready to Train)";
+                // Calculate total loss for display
+                const totalLoss = calculateTotalLoss();
+                lossDisplay.textContent = `Total Cost: ${totalLoss.toFixed(4)}`;
+                btnStep.textContent = "Step: Backprop Phase";
+            }
+            else if (appState.phase === STATE.BACKPROP_CALCING) {
+                statusDisplay.textContent = `Calculating Gradient: Output ${appState.index + 1}/10`;
+                const totalLoss = calculateTotalLoss();
+                lossDisplay.textContent = `Total Cost: ${totalLoss.toFixed(4)}`;
+            }
+            else if (appState.phase === STATE.BACKPROP_HIDDEN) {
+                statusDisplay.textContent = `Calculating Gradient: Hidden ${appState.index + 1}/20`;
+                const totalLoss = calculateTotalLoss();
+                lossDisplay.textContent = `Total Cost: ${totalLoss.toFixed(4)}`;
+            }
+            else if (appState.phase === STATE.TRAINING_DONE) {
+                statusDisplay.textContent = "Training Step Complete";
+                const totalLoss = calculateTotalLoss();
+                lossDisplay.textContent = `Total Cost: ${totalLoss.toFixed(4)}`;
+                btnStep.textContent = "Step: Next Epoch";
+            }
+        }
+
+        function calculateTotalLoss() {
+            let totalLoss = 0;
+            network.outputLayer.neurons.forEach((n, i) => {
+                const targetVal = (network.target === i) ? 1 : 0;
+                totalLoss += 0.5 * (n.output - targetVal) ** 2;
+            });
+            return totalLoss;
         }
 
         function drawConnections() {
@@ -605,7 +682,7 @@
                     ctx.strokeStyle = `rgba(56, 189, 248, ${val * 0.9 + 0.1})`;
                     ctx.stroke();
                 }
-            } else if (appState.phase === STATE.DONE) {
+            } else if (appState.phase === STATE.DONE || appState.phase === STATE.TRAINING_DONE) {
                 ctx.strokeStyle = 'rgba(56, 189, 248, 0.1)';
                 for (let i = 0; i < hiddenPositions.length; i++) {
                     if (network.hiddenLayer.neurons[i].output < 0.1) continue;
@@ -616,11 +693,71 @@
                         ctx.stroke();
                     }
                 }
+            } else if (appState.phase === STATE.BACKPROP_CALCING) {
+                // Focus: Hidden -> Current Output Neuron
+                const outIdx = appState.index;
+                const outPos = outputPositions[outIdx];
+                const outNeuron = network.outputLayer.neurons[outIdx];
+
+                // Calculate gradient for visualization on the fly
+                const targetVal = (network.target === outIdx) ? 1 : 0;
+                const errorTerm = (outNeuron.output - targetVal);
+                const derivative = outNeuron.output * (1 - outNeuron.output);
+                const delta = errorTerm * derivative;
+
+                for (let i = 0; i < hiddenPositions.length; i++) {
+                    const hOut = network.hiddenLayer.neurons[i].output;
+                    const gradient = delta * hOut;
+
+                    const mag = Math.abs(gradient);
+                    const isPos = gradient > 0;
+
+                    ctx.beginPath();
+                    ctx.moveTo(hiddenPositions[i].x, hiddenPositions[i].y);
+                    ctx.lineTo(outPos.x, outPos.y);
+
+                    // Gradient > 0 (Red) means derivative of cost wrt weight is positive.
+                    // Increasing weight increases cost. So we want to DECREASE weight.
+                    // Meaning the error is that output is TOO HIGH.
+                    const color = isPos ? `rgba(239, 68, 68, ${Math.min(1, mag * 20 + 0.3)})` : `rgba(59, 130, 246, ${Math.min(1, mag * 20 + 0.3)})`;
+
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 1 + mag * 10;
+                    ctx.stroke();
+                }
+            } else if (appState.phase === STATE.BACKPROP_HIDDEN) {
+                // Focus: Input -> Current Hidden Neuron
+                const hIdx = appState.index;
+                const hPos = hiddenPositions[hIdx];
+                const hNeuron = network.hiddenLayer.neurons[hIdx];
+
+                // Delta for hidden neuron should have been pre-calculated before entering this state
+                const delta = hNeuron.delta;
+
+                for (let i = 0; i < inputPositions.length; i++) {
+                    if (inputData[i] < 0.05) continue; // Only process active inputs
+
+                    // gradient = delta_hidden * input_val
+                    const gradient = delta * inputData[i];
+
+                    const mag = Math.abs(gradient);
+                    const isPos = gradient > 0;
+
+                    ctx.beginPath();
+                    ctx.moveTo(inputPositions[i].x, inputPositions[i].y);
+                    ctx.lineTo(hPos.x, hPos.y);
+
+                    const color = isPos ? `rgba(239, 68, 68, ${Math.min(1, mag * 20 + 0.3)})` : `rgba(59, 130, 246, ${Math.min(1, mag * 20 + 0.3)})`;
+
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 1 + mag * 10;
+                    ctx.stroke();
+                }
             }
         }
 
         function performStep() {
-            if (appState.phase === STATE.DONE) return;
+            if (appState.phase === STATE.TRAINING_DONE) return;
 
             if (appState.phase === STATE.IDLE) {
                 appState.phase = STATE.HIDDEN;
@@ -654,12 +791,105 @@
                     updateVisuals();
                 }
             }
+            // Backprop Steps
+            else if (appState.phase === STATE.DONE) {
+                // Start Backprop Phase
+                appState.phase = STATE.BACKPROP_CALCING;
+                appState.index = 0;
+            }
+            else if (appState.phase === STATE.BACKPROP_CALCING) {
+                // 1. Calculate and Visualize Loss for Current Output Neuron
+                const idx = appState.index;
+                const neuron = network.outputLayer.neurons[idx];
+                const targetVal = (network.target === idx) ? 1 : 0;
+
+                // Show Loss on UI
+                if (outputNeuronsEl.children[idx]) {
+                    const lossLabel = outputNeuronsEl.children[idx].querySelector('.loss-value');
+                    if (lossLabel) {
+                        const loss = 0.5 * (neuron.output - targetVal) ** 2;
+                        lossLabel.textContent = `L=${loss.toFixed(4)}`;
+                        lossLabel.style.opacity = '1';
+                    }
+                }
+
+                // Store delta for update later
+                // Delta = (a - y) * a(1 - a)
+                const error = neuron.output - targetVal;
+                neuron.delta = error * sigmoidDerivative(neuron.output);
+
+                updateVisuals();
+                drawConnections(); // Draws the gradient lines
+
+                appState.index++;
+                if (appState.index >= 10) {
+                    // Output phase done. Pre-calculate Hidden Deltas
+                    calculateHiddenDeltas();
+
+                    // Transition to BACKPROP_HIDDEN
+                    appState.phase = STATE.BACKPROP_HIDDEN;
+                    appState.index = 0;
+
+                    updateVisuals();
+                    drawConnections();
+                }
+            }
+            else if (appState.phase === STATE.BACKPROP_HIDDEN) {
+                // Visualization loop for Hidden -> Input
+
+                // We just visualize here. Delta is already in the neuron.
+                updateVisuals();
+                drawConnections();
+
+                appState.index++;
+                if (appState.index >= 20) {
+                    // All visualization done. Apply updates.
+                    applyWeightUpdates(); // Renamed from applyFullBackprop
+
+                    appState.phase = STATE.TRAINING_DONE;
+                    drawConnections();
+                    updateVisuals();
+                }
+            }
+        }
+
+        function calculateHiddenDeltas() {
+            // 1. Calculate Hidden Deltas
+            network.hiddenLayer.neurons.forEach((n, hIdx) => {
+                let sum = 0;
+                network.outputLayer.neurons.forEach((outN, oIdx) => {
+                    sum += outN.delta * outN.weights[hIdx];
+                });
+                n.delta = sum * sigmoidDerivative(n.output);
+            });
+        }
+
+        function applyWeightUpdates() {
+            // Weights are updated based on stored deltas.
+
+            // 2. Update Output Weights
+            const hiddenOutputs = network.hiddenLayer.neurons.map(n => n.output);
+            network.outputLayer.neurons.forEach(n => {
+                for (let i = 0; i < n.weights.length; i++) {
+                    n.weights[i] -= network.learningRate * n.delta * hiddenOutputs[i];
+                }
+                n.bias -= network.learningRate * n.delta;
+            });
+
+            // 3. Update Hidden Weights
+            network.hiddenLayer.neurons.forEach(n => {
+                for (let i = 0; i < n.weights.length; i++) {
+                    n.weights[i] -= network.learningRate * n.delta * inputData[i];
+                }
+                n.bias -= network.learningRate * n.delta;
+            });
         }
 
         function finishCurrentLayer() {
             if (appState.phase === STATE.IDLE) performStep();
             const startPhase = appState.phase;
-            if (startPhase === STATE.DONE) return;
+            if (startPhase === STATE.DONE || startPhase === STATE.TRAINING_DONE) return;
+
             while (appState.phase === startPhase) {
                 performStep();
             }
@@ -689,7 +919,18 @@
                     tooltip.style.opacity = 1;
                     tooltip.style.left = e.pageX + 15 + 'px';
                     tooltip.style.top = e.pageY + 15 + 'px';
-                    tooltip.innerHTML = `<strong>Neuron ${idx}</strong><br>Sum: ${n.inputSum.toFixed(4)}<br>Val: ${n.output.toFixed(4)}<br>Bias: ${n.bias.toFixed(4)}`;
+
+                    // Enhanced Tooltip for Backprop
+                    let content = `<strong>Neuron ${idx}</strong><br>Sum: ${n.inputSum.toFixed(4)}<br>Val: ${n.output.toFixed(4)}<br>Bias: ${n.bias.toFixed(4)}`;
+
+                    if (appState.phase === STATE.TRAINING_DONE) {
+                        // Maybe show what the delta WAS? The neuron state isn't cleared yet.
+                        if (n.delta !== 0) {
+                            content += `<br><span style="color: #f472b6">Delta: ${n.delta.toFixed(6)}</span>`;
+                        }
+                    }
+
+                    tooltip.innerHTML = content;
                     return;
                 }
             }
@@ -708,15 +949,9 @@
             }
 
             // Connection Check (only if not over neuron)
-            // Check "Active" lines primarily based on state
             const mouseX = e.pageX - canvas.getBoundingClientRect().left;
             const mouseY = e.pageY - canvas.getBoundingClientRect().top;
             const mouseP = { x: mouseX, y: mouseY };
-
-            // Strategy: 
-            // If HIDDEN phase: Check lines from Input -> Current Hidden Neuron
-            // If OUTPUT phase: Check lines from Hidden -> Current Output Neuron
-            // If DONE phase: Check visible webs?
 
             let foundWeight = null;
             let foundSourceId = null;
@@ -724,7 +959,6 @@
             if (appState.phase === STATE.HIDDEN && appState.index > 0) {
                 // The neuron just calculated is appState.index - 1
                 const targetIdx = appState.index - 1;
-                // Just show weights for this active "fan-in"
                 const targetPos = hiddenPositions[targetIdx];
                 const neuron = network.hiddenLayer.neurons[targetIdx];
 
@@ -753,15 +987,84 @@
                     }
                 }
             }
+            else if (appState.phase === STATE.BACKPROP_CALCING && appState.index > 0) { // index > 0 because updateVisuals increments it
+                // We are visualizing lines to Output[appState.index - 1]
+                const outIdx = appState.index - 1;
+                const outPos = outputPositions[outIdx];
+
+                // Lines are from Hidden -> Out
+                for (let i = 0; i < hiddenPositions.length; i++) {
+                    const d = distToSegment(mouseP, hiddenPositions[i], outPos);
+                    if (d < 5) {
+                        // Just finding the connection to show tooltip
+                        foundWeight = 0; // Dummy
+                        foundSourceId = `Hidden ${i}`;
+                        break;
+                    }
+                }
+
+                if (foundSourceId) {
+                    // Special tooltip for Gradient
+                    const outN = network.outputLayer.neurons[outIdx];
+                    const targetVal = (network.target === outIdx) ? 1 : 0;
+                    const a = outN.output;
+                    const y = targetVal;
+
+                    const hIdx = parseInt(foundSourceId.split(" ")[1]);
+                    const hOut = network.hiddenLayer.neurons[hIdx].output;
+
+                    // Gradient = (a - y) * a(1-a) * h_out
+                    const term1 = a - y;
+                    const term2 = a * (1 - a);
+                    const term3 = hOut;
+                    const grad = term1 * term2 * term3;
+
+                    tooltip.style.opacity = 1;
+                    tooltip.style.left = e.pageX + 15 + 'px';
+                    tooltip.style.top = e.pageY + 15 + 'px';
+                    tooltip.innerHTML = `<strong>Cost Gradient</strong><br>
+                     dC/dw = (a - y) * σ'(z) * h_out<br>
+                     = (${term1.toFixed(3)}) * ${term2.toFixed(3)} * ${term3.toFixed(3)}<br>
+                     = <strong>${grad.toFixed(5)}</strong><br>
+                     <span style="color:${grad > 0 ? '#ef4444' : '#3b82f6'}">${grad > 0 ? 'Decrease Weight' : 'Increase Weight'}</span>`;
+                    return;
+                }
+            } else if (appState.phase === STATE.BACKPROP_HIDDEN && appState.index > 0) {
+                // Focus: Input -> Current Hidden (appState.index - 1)
+                const hIdx = appState.index - 1;
+                const hPos = hiddenPositions[hIdx];
+                const hNeuron = network.hiddenLayer.neurons[hIdx];
+
+                for (let i = 0; i < inputPositions.length; i++) {
+                    if (inputData[i] < 0.05) continue;
+                    const d = distToSegment(mouseP, inputPositions[i], hPos);
+                    if (d < 5) {
+                        const delta = hNeuron.delta;
+                        const val = inputData[i];
+                        const grad = delta * val;
+
+                        tooltip.style.opacity = 1;
+                        tooltip.style.left = e.pageX + 15 + 'px';
+                        tooltip.style.top = e.pageY + 15 + 'px';
+                        tooltip.innerHTML = `<strong>Cost Gradient</strong><br>
+                         dC/dw = δ_hidden * input_val<br>
+                         = ${delta.toFixed(5)} * ${val.toFixed(3)}<br>
+                         = <strong>${grad.toFixed(5)}</strong><br>
+                         <span style="color:${grad > 0 ? '#ef4444' : '#3b82f6'}">${grad > 0 ? 'Decrease Weight' : 'Increase Weight'}</span>`;
+                        return;
+                    }
+                }
+            }
 
             if (foundWeight !== null) {
                 tooltip.style.opacity = 1;
                 tooltip.style.left = e.pageX + 15 + 'px';
                 tooltip.style.top = e.pageY + 15 + 'px';
                 tooltip.innerHTML = `<strong>Connection</strong><br>From: ${foundSourceId}<br>Weight: ${foundWeight.toFixed(4)}`;
-            } else {
+            }
+            else {
                 // Hide if not finding anything
-                if (!e.target.classList.contains('neuron')) {
+                if (!e.target.classList.contains('neuron') && !e.target.classList.contains('input-cell')) {
                     tooltip.style.opacity = 0;
                 }
             }
@@ -770,13 +1073,46 @@
         btnStep.addEventListener('click', performStep);
         btnFinishLayer.addEventListener('click', finishCurrentLayer);
 
+        btnTrain.addEventListener('click', () => {
+            if (isTraining) return; // Debounce
+            isTraining = true;
+
+            // Reset if we are stuck at done
+            if (appState.phase === STATE.TRAINING_DONE) {
+                appState.phase = STATE.IDLE;
+                appState.index = 0;
+                updateVisuals();
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+
+            function trainingLoop() {
+                if (appState.phase === STATE.TRAINING_DONE) {
+                    isTraining = false;
+                    return;
+                }
+
+                performStep();
+
+                // Dynamic speed:
+                let speed = 10;
+                if (appState.phase === STATE.BACKPROP_CALCING || appState.phase === STATE.BACKPROP_HIDDEN) {
+                    speed = 200; // Slower to see the flow
+                } else {
+                    speed = 5; // Fast forward
+                }
+
+                setTimeout(() => requestAnimationFrame(trainingLoop), speed);
+            }
+
+            trainingLoop();
+        });
+
         btnReset.addEventListener('click', () => {
+            isTraining = false;
             appState.phase = STATE.IDLE;
             appState.index = 0;
             // Creation of new Network randomizes weights/biases
             network = new Network();
-            // Re-bind to UI or update UI to reflect new values (updateVisuals handles color/values)
-            // But UI elements are stable, we just update their colors/text.
 
             // Clear outputs
             updateVisuals();
