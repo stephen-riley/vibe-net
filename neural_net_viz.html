@@ -38,6 +38,7 @@
             align-items: center;
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
             z-index: 10;
+            position: relative;
         }
 
         h1 {
@@ -60,10 +61,11 @@
         #status-display {
             font-size: 0.875rem;
             color: #94a3b8;
-            margin-right: 1rem;
             font-weight: 500;
-            min-width: 200px;
-            text-align: right;
+            position: absolute;
+            left: 400px;
+            width: 350px;
+            text-align: left;
             display: flex;
             flex-direction: column;
             gap: 4px;
@@ -72,6 +74,8 @@
         #loss-display {
             font-size: 0.75rem;
             color: #ef4444;
+            min-height: 1.25em;
+            line-height: 1.25em;
         }
 
         button {
@@ -290,11 +294,11 @@
 
     <header>
         <h1>Neural Net Visualization</h1>
+        <div id="status-display">
+            <div id="status-text">Ready</div>
+            <div id="loss-display"></div>
+        </div>
         <div id="controls">
-            <div id="status-display">
-                <div id="status-text">Ready</div>
-                <div id="loss-display"></div>
-            </div>
             <button id="btn-step">Step Neuron</button>
             <button id="btn-finish-layer">Finish Layer</button>
             <button id="btn-train">Train Step</button>
