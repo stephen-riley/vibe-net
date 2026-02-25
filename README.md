@@ -16,3 +16,13 @@ This is a neural network that can recognize a handwritten digit (hardcoded to an
 
 ### Inspecting the Network
 You can hover over any neuron or input pixel to view its given value. You can also hover over the connection lines between neurons to inspect the connection weight and cost gradient during the backpropagation phase.
+
+## Project History & Credits
+
+This interactive neural network visualization was entirely "vibe-coded" relying on natural language prompts through **Antigravity** and the **Gemini 3** series of models.
+
+The project began as an attempt to visually animate a simple 3-layer neural network feed-forward pass classifying an ASCII art digit '7'. From that initial foundation, it quickly evolved into a fully functional and strictly didactic application featuring:
+- A glowing dynamic styling and CSS transitions
+- Real-time tooltips to inspect biases, activation values, and exact cost gradients
+- Explicit visual breakdowns of backpropagation errors highlighting which connections need weight reduction (Red) vs increases (Blue)
+- A continuous `Train to Epsilon` feature allowing the network to continuously optimize weights against a specified loss threshold.
