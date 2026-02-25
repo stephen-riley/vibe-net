@@ -6,6 +6,7 @@ This is a neural network that can recognize a handwritten digit (hardcoded to an
 
 ## How do I use it?
 
+1. Download `neural_net_viz.html`. You do not need to download any other files.
 1. Open `neural_net_viz.html` in your browser.
 1. **Step Neuron (`Step Neuron`)**: Steps through the feed-forward pass one single neuron at a time. The active line connections light up and the current neuron's value will update.
 1. **Finish Layer (`Finish Layer`)**: Fast-forwards completing the calculations for all the neurons in the current layer.
