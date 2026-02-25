@@ -613,6 +613,8 @@
                 statusDisplay.textContent = "Ready to start";
                 lossDisplay.textContent = "";
                 btnStep.textContent = "Step Neuron";
+                btnFinishLayer.disabled = false;
+                btnTrain.disabled = false;
                 // Hide losses
                 document.querySelectorAll('.loss-value').forEach(el => el.style.opacity = 0);
             }
@@ -640,6 +642,7 @@
                 const totalLoss = calculateTotalLoss();
                 lossDisplay.textContent = `Total Cost: ${totalLoss.toFixed(4)}`;
                 btnStep.textContent = "Step: Next Epoch";
+                btnFinishLayer.disabled = true;
             }
         }
 
@@ -684,6 +687,20 @@
                 }
             } else if (appState.phase === STATE.DONE || appState.phase === STATE.TRAINING_DONE) {
                 ctx.strokeStyle = 'rgba(56, 189, 248, 0.1)';
+
+                // Draw Input -> Hidden ghosts
+                for (let i = 0; i < inputPositions.length; i++) {
+                    if (inputData[i] < 0.05) continue;
+                    for (let j = 0; j < hiddenPositions.length; j++) {
+                        if (network.hiddenLayer.neurons[j].output < 0.1) continue;
+                        ctx.beginPath();
+                        ctx.moveTo(inputPositions[i].x, inputPositions[i].y);
+                        ctx.lineTo(hiddenPositions[j].x, hiddenPositions[j].y);
+                        ctx.stroke();
+                    }
+                }
+
+                // Draw Hidden -> Output ghosts
                 for (let i = 0; i < hiddenPositions.length; i++) {
                     if (network.hiddenLayer.neurons[i].output < 0.1) continue;
                     for (let j = 0; j < outputPositions.length; j++) {
@@ -757,7 +774,13 @@
         }
 
         function performStep() {
-            if (appState.phase === STATE.TRAINING_DONE) return;
+            if (appState.phase === STATE.TRAINING_DONE) {
+                appState.phase = STATE.IDLE;
+                appState.index = 0;
+                updateVisuals();
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                // Continue directly into the next step
+            }
 
             if (appState.phase === STATE.IDLE) {
                 appState.phase = STATE.HIDDEN;
@@ -1094,11 +1117,9 @@
                 performStep();
 
                 // Dynamic speed:
-                let speed = 10;
+                let speed = 5; // Fast forward
                 if (appState.phase === STATE.BACKPROP_CALCING || appState.phase === STATE.BACKPROP_HIDDEN) {
-                    speed = 200; // Slower to see the flow
-                } else {
-                    speed = 5; // Fast forward
+                    speed = 5; // Match forward pass speed
                 }
 
                 setTimeout(() => requestAnimationFrame(trainingLoop), speed);
@@ -1119,11 +1140,29 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
         });
 
-        window.addEventListener('resize', resizeCanvas);
+        function scaleToFit() {
+            // Reset zoom to calculate actual heights
+            document.body.style.zoom = 1;
+
+            const minDesiredHeight = 850; // Approximated from content size
+            const currentHeight = window.innerHeight;
+
+            if (currentHeight < minDesiredHeight) {
+                const zoomFactor = currentHeight / minDesiredHeight;
+                document.body.style.zoom = zoomFactor;
+            } else {
+                document.body.style.zoom = 1; // Default
+            }
+
+            resizeCanvas();
+        }
+
+        window.addEventListener('resize', scaleToFit);
 
         inputData = parseInputData(RAW_DATA);
         initUI();
-        updateVisuals();
+        scaleToFit(); // Initial scale & resizeCanvas inline
+        updateVisuals(); // Crucial for displaying initial state
 
     </script>
 </body>
