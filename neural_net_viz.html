@@ -1180,9 +1180,18 @@
         });
 
         btnTrainEpsilon.addEventListener('click', () => {
-            if (isTraining) return; // Debounce
+            if (isTrainingToEpsilon) {
+                // Pause training (flag will be checked at end of epoch)
+                isTrainingToEpsilon = false;
+                // Leave button styled slightly until epoch actually hits DONE
+                return;
+            }
+            if (isTraining) return; // Debounce if running a single normal Train Step
+
             isTraining = true;
             isTrainingToEpsilon = true;
+            btnTrainEpsilon.textContent = 'Pause Training';
+            btnTrainEpsilon.style.backgroundColor = '#ef4444'; // Red active color
 
             const targetEpsilon = parseFloat(epsilonInput.value) || 0.01;
 
@@ -1195,10 +1204,19 @@
 
             function epsilonLoop() {
                 if (appState.phase === STATE.TRAINING_DONE) {
+                    if (!isTrainingToEpsilon) {
+                        // Pause requested and epoch finished
+                        isTraining = false;
+                        btnTrainEpsilon.textContent = 'Train to Epsilon';
+                        btnTrainEpsilon.style.backgroundColor = '';
+                        return;
+                    }
                     const currentLoss = calculateTotalLoss();
                     if (currentLoss <= targetEpsilon) {
                         isTraining = false;
                         isTrainingToEpsilon = false;
+                        btnTrainEpsilon.textContent = 'Train to Epsilon';
+                        btnTrainEpsilon.style.backgroundColor = ''; // Revert to default
                         return; // Stop training
                     } else {
                         // Immediately reset and start next epoch
@@ -1221,6 +1239,9 @@
         btnReset.addEventListener('click', () => {
             isTraining = false;
             isTrainingToEpsilon = false;
+            btnTrainEpsilon.textContent = 'Train to Epsilon';
+            btnTrainEpsilon.style.backgroundColor = '';
+
             appState.phase = STATE.IDLE;
             appState.index = 0;
             // Creation of new Network randomizes weights/biases
